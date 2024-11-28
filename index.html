@@ -24,6 +24,11 @@
     <div id="info">
         <div>Select input source and click to start:</div>
         <select id="audioSource" style="margin: 10px 0; padding: 5px; background: rgba(255,255,255,0.9);"></select>
+        <div style="margin-top: 10px;">
+            <label for="gainControl">Gain: </label>
+            <input type="range" id="gainControl" min="0" max="200" value="100" style="width: 150px; background: rgba(255,255,255,0.9);">
+            <span id="gainValue">100%</span>
+        </div>
     </div>
     <script type="importmap">
         {
@@ -37,9 +42,21 @@
         import * as THREE from 'three';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-        let scene, camera, renderer, analyser, dataArray;
+        let scene, camera, renderer, analyser, dataArray, gainNode;
         let line, positions, controls;
         const NUM_POINTS = 128;
+        let gainValue = 1.0;
+
+        // Helper function to interpolate between colors
+        function lerpColor(value) {
+            if (value < 0.5) {
+                // Lerp from green to yellow
+                return new THREE.Color(value * 2, 1, 0);
+            } else {
+                // Lerp from yellow to red
+                return new THREE.Color(1, 2 - value * 2, 0);
+            }
+        }
 
         function init() {
             // Create scene
@@ -50,27 +67,33 @@
             document.body.appendChild(renderer.domElement);
 
             // Setup camera and controls
-            camera.position.set(0, 0, 5);
+            camera.position.set(3, 2, 3);
             controls = new OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
             controls.autoRotate = true;
-            controls.autoRotateSpeed = 0.5;
+            controls.autoRotateSpeed = 1;
+            controls.enableZoom = false;
+            controls.enablePan = false;
+            
+            // Add additional rotation around other axes
+            camera.rotateX(Math.PI / 12);
 
             // Create line geometry
             const geometry = new THREE.BufferGeometry();
             positions = new Float32Array(NUM_POINTS * 3);
             
             for(let i = 0; i < NUM_POINTS; i++) {
-                const angle = (i / NUM_POINTS) * Math.PI * 2;
-                positions[i * 3] = Math.cos(angle) * 2;
-                positions[i * 3 + 1] = Math.sin(angle) * 2;
+                const x = (i / NUM_POINTS) * 4 - 2; // Straight line from -2 to 2
+                positions[i * 3] = x;
+                positions[i * 3 + 1] = 0;
                 positions[i * 3 + 2] = 0;
             }
 
             geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(NUM_POINTS * 3), 3));
             
             const material = new THREE.LineBasicMaterial({ 
-                color: 0xffffff,
+                vertexColors: true,
                 linewidth: 2
             });
 
@@ -133,9 +156,11 @@
                 });
                 
                 const source = audioContext.createMediaStreamSource(currentStream);
+                gainNode = audioContext.createGain();
                 analyser = audioContext.createAnalyser();
                 analyser.fftSize = 256;
-                source.connect(analyser);
+                source.connect(gainNode);
+                gainNode.connect(analyser);
                 dataArray = new Uint8Array(analyser.frequencyBinCount);
                 animate();
             } catch (err) {
@@ -163,28 +188,53 @@
         function updateLine() {
             if (analyser) {
                 analyser.getByteFrequencyData(dataArray);
+                const colors = line.geometry.attributes.color.array;
                 
                 for(let i = 0; i < NUM_POINTS; i++) {
-                    const angle = (i / NUM_POINTS) * Math.PI * 2;
-                    const value = dataArray[i] / 128.0;
+                    const value = (dataArray[i] / 255.0) * gainValue;
+                    const x = (i / NUM_POINTS) * 4 - 2;
                     
-                    positions[i * 3] = Math.cos(angle) * (2 + value);
-                    positions[i * 3 + 1] = Math.sin(angle) * (2 + value);
-                    positions[i * 3 + 2] = value * 0.5;
+                    positions[i * 3] = x;
+                    positions[i * 3 + 1] = value;
+                    positions[i * 3 + 2] = 0;
+                    
+                    const color = lerpColor(Math.min(value, 1.0));
+                    colors[i * 3] = color.r;
+                    colors[i * 3 + 1] = color.g;
+                    colors[i * 3 + 2] = color.b;
                 }
 
                 line.geometry.attributes.position.needsUpdate = true;
+                line.geometry.attributes.color.needsUpdate = true;
             }
         }
 
         function animate() {
             requestAnimationFrame(animate);
             updateLine();
+            
+            // Rotate camera slowly around all axes
+            camera.position.applyAxisAngle(new THREE.Vector3(1, 0, 0), 0.001);
+            camera.position.applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.002);
+            camera.position.applyAxisAngle(new THREE.Vector3(0, 0, 1), 0.001);
+            camera.lookAt(0, 0, 0);
+            
             controls.update();
             renderer.render(scene, camera);
         }
 
         init();
+
+        // Setup gain control
+        const gainControl = document.getElementById('gainControl');
+        const gainValueDisplay = document.getElementById('gainValue');
+        gainControl.addEventListener('input', (e) => {
+            gainValue = e.target.value / 100;
+            gainValueDisplay.textContent = e.target.value + '%';
+            if (gainNode) {
+                gainNode.gain.value = gainValue;
+            }
+        });
 
         // Request permission and enumerate devices on page load
         navigator.mediaDevices.getUserMedia({ audio: true })
