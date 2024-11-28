@@ -71,9 +71,12 @@
             controls = new OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
             controls.autoRotate = true;
-            controls.autoRotateSpeed = 0.5;
-            controls.enableZoom = true;  // Allow zoom for better interaction
+            controls.autoRotateSpeed = 0.2;  // Slower rotation
+            controls.enableZoom = true;
+            controls.minDistance = 4;  // Minimum distance from target
+            controls.maxDistance = 8;  // Maximum distance from target
             controls.enablePan = false;
+            controls.dampingFactor = 0.05;  // Smoother camera movement
             
             // Add additional rotation around other axes
             camera.rotateX(Math.PI / 12);
@@ -160,7 +163,10 @@
                 const source = audioContext.createMediaStreamSource(currentStream);
                 gainNode = audioContext.createGain();
                 analyser = audioContext.createAnalyser();
-                analyser.fftSize = 2048;  // Increased for better frequency resolution
+                analyser.fftSize = 2048;  // High frequency resolution
+                analyser.smoothingTimeConstant = 0.85;  // Smoother frequency transitions
+                analyser.minDecibels = -85;  // Increased sensitivity to quiet sounds
+                analyser.maxDecibels = -10;  // Prevent clipping at loud volumes
                 source.connect(gainNode);
                 gainNode.connect(analyser);
                 dataArray = new Uint8Array(analyser.frequencyBinCount);
@@ -194,16 +200,29 @@
             camera.updateProjectionMatrix();
         }
 
+        let previousValues = new Array(NUM_POINTS).fill(0);
+        const smoothingFactor = 0.3; // Adjust this value between 0 and 1 for different smoothing amounts
+
         function updateLine() {
             if (analyser) {
                 analyser.getByteFrequencyData(dataArray);
                 const colors = line.geometry.attributes.color.array;
                 
                 for(let i = 0; i < NUM_POINTS; i++) {
-                    // Apply frequency-dependent scaling
-                    const freqScale = 1.0 + (i / NUM_POINTS);  // Higher frequencies get boosted
-                    const value = (dataArray[i] / 255.0) * gainValue * freqScale * 1.5;  // Overall height increased
-                    const x = (i / NUM_POINTS) * 8 - 4;  // Match initial size
+                    // Enhanced frequency-dependent scaling
+                    const freqScale = Math.pow(1.0 + (i / NUM_POINTS), 0.8); // More natural frequency curve
+                    
+                    // Apply bass boost for lower frequencies
+                    const bassBoost = i < NUM_POINTS * 0.2 ? 1.4 : 1.0;
+                    
+                    // Calculate the new value with improved scaling
+                    let value = (dataArray[i] / 255.0) * gainValue * freqScale * bassBoost * 1.8;
+                    
+                    // Apply temporal smoothing
+                    value = previousValues[i] * (1 - smoothingFactor) + value * smoothingFactor;
+                    previousValues[i] = value;
+
+                    const x = (i / NUM_POINTS) * 8 - 4;
                     
                     positions[i * 3] = x;
                     positions[i * 3 + 1] = value;
@@ -224,15 +243,20 @@
             requestAnimationFrame(animate);
             updateLine();
             
-            // Rotate camera in a more dynamic pattern based on audio intensity
+            // Calculate audio intensity focusing more on lower frequencies
             let avgIntensity = 0;
-            for(let i = 0; i < NUM_POINTS; i++) {
+            const intensitySamples = Math.floor(NUM_POINTS * 0.3); // Focus on lower 30% of frequencies
+            for(let i = 0; i < intensitySamples; i++) {
                 avgIntensity += dataArray[i];
             }
-            avgIntensity = (avgIntensity / NUM_POINTS) / 255.0;
+            avgIntensity = (avgIntensity / intensitySamples) / 255.0;
             
-            camera.position.applyAxisAngle(new THREE.Vector3(1, 0, 0), 0.001 * (1 + avgIntensity));
-            camera.position.applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.002 * (1 + avgIntensity));
+            // Smooth the intensity for camera movement
+            const intensityFactor = avgIntensity * 0.3; // Reduce the impact of intensity
+            
+            // Gentler camera movement
+            camera.position.applyAxisAngle(new THREE.Vector3(1, 0, 0), 0.0003 * (1 + intensityFactor));
+            camera.position.applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.0005 * (1 + intensityFactor));
             camera.lookAt(0, 0, 0);
             
             controls.update();
