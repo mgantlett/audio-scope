@@ -89,28 +89,46 @@
             const audioInputs = devices.filter(device => device.kind === 'audioinput');
             const select = document.getElementById('audioSource');
             select.innerHTML = '';
+            
+            // Add "No input" option
+            const noInputOption = document.createElement('option');
+            noInputOption.value = '';
+            noInputOption.text = '-- No input --';
+            select.appendChild(noInputOption);
+            
             audioInputs.forEach(device => {
                 const option = document.createElement('option');
                 option.value = device.deviceId;
-                option.text = device.label || `Microphone ${select.length + 1}`;
+                option.text = device.label || `Microphone ${select.length}`;
                 select.appendChild(option);
             });
         }
 
         async function initAudio() {
-            if (!audioContext) {
-                audioContext = new AudioContext();
-            }
-
+            // Clean up existing resources
             if (currentStream) {
                 currentStream.getTracks().forEach(track => track.stop());
+                currentStream = null;
+            }
+            
+            if (audioContext) {
+                await audioContext.close();
+                audioContext = null;
+                analyser = null;
             }
 
             const deviceId = document.getElementById('audioSource').value;
+            if (!deviceId) {
+                return; // Exit if no device selected
+            }
+
             try {
+                // Create new audio context
+                audioContext = new AudioContext();
+                
                 currentStream = await navigator.mediaDevices.getUserMedia({
                     audio: {
-                        deviceId: deviceId ? {exact: deviceId} : undefined
+                        deviceId: {exact: deviceId}
                     }
                 });
                 
@@ -122,6 +140,17 @@
                 animate();
             } catch (err) {
                 console.error('Error accessing audio:', err);
+                // Clean up on error
+                if (currentStream) {
+                    currentStream.getTracks().forEach(track => track.stop());
+                    currentStream = null;
+                }
+                if (audioContext) {
+                    await audioContext.close();
+                    audioContext = null;
+                }
+                analyser = null;
+                throw err; // Rethrow to handle in caller
             }
         }
 
@@ -166,19 +195,29 @@
             .catch(err => console.error('Error getting initial permissions:', err));
 
         // Handle device selection changes
-        document.getElementById('audioSource').addEventListener('change', () => {
-            initAudio().then(() => {
-                // Hide the info div only after successful audio initialization
-                document.getElementById('info').style.display = 'none';
-            });
+        document.getElementById('audioSource').addEventListener('change', async (event) => {
+            const deviceId = event.target.value;
+            if (!deviceId) {
+                // If no device is selected, stop current stream
+                if (currentStream) {
+                    currentStream.getTracks().forEach(track => track.stop());
+                    currentStream = null;
+                }
+                return;
+            }
+            
+            try {
+                await initAudio();
+                // Don't hide the info div - keep it visible for future selections
+            } catch (err) {
+                console.error('Error initializing audio:', err);
+            }
         });
 
         // Start audio processing when clicked, but only if no device is selected yet
         document.addEventListener('click', () => {
             if (!analyser && !currentStream) {
-                initAudio().then(() => {
-                    document.getElementById('info').style.display = 'none';
-                });
+                initAudio().catch(err => console.error('Error initializing audio:', err));
             }
         });
     </script>
