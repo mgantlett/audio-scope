@@ -203,23 +203,48 @@
         let previousValues = new Array(NUM_POINTS).fill(0);
         const smoothingFactor = 0.3; // Adjust this value between 0 and 1 for different smoothing amounts
 
+        // Energy threshold for beat detection
+        const beatThreshold = 0.6;
+        let lastBeatTime = 0;
+        const minBeatInterval = 200; // Minimum time between beats in ms
+        const beatDecay = 0.98; // How quickly the beat effect fades
+
         function updateLine() {
             if (analyser) {
                 analyser.getByteFrequencyData(dataArray);
                 const colors = line.geometry.attributes.color.array;
                 
+                // Calculate bass energy (focus on lower frequencies)
+                let bassEnergy = 0;
+                const bassRange = Math.floor(NUM_POINTS * 0.1); // Use first 10% of frequencies
+                for (let i = 0; i < bassRange; i++) {
+                    bassEnergy += dataArray[i];
+                }
+                bassEnergy = bassEnergy / (bassRange * 255); // Normalize to 0-1
+
+                // Beat detection
+                const now = performance.now();
+                const isBeat = bassEnergy > beatThreshold && (now - lastBeatTime) > minBeatInterval;
+                if (isBeat) {
+                    lastBeatTime = now;
+                }
+
                 for(let i = 0; i < NUM_POINTS; i++) {
                     // Enhanced frequency-dependent scaling
-                    const freqScale = Math.pow(1.0 + (i / NUM_POINTS), 0.8); // More natural frequency curve
+                    const freqScale = Math.pow(1.0 + (i / NUM_POINTS), 0.8);
                     
-                    // Apply bass boost for lower frequencies
-                    const bassBoost = i < NUM_POINTS * 0.2 ? 1.4 : 1.0;
+                    // Stronger bass boost
+                    const bassBoost = i < NUM_POINTS * 0.2 ? 2.0 : 1.0;
                     
-                    // Calculate the new value with improved scaling
-                    let value = (dataArray[i] / 255.0) * gainValue * freqScale * bassBoost * 1.8;
+                    // Calculate the new value with beat emphasis
+                    let value = (dataArray[i] / 255.0) * gainValue * freqScale * bassBoost * 2.0;
+                    if (isBeat && i < NUM_POINTS * 0.3) { // Amplify low frequencies on beats
+                        value *= 1.5;
+                    }
                     
-                    // Apply temporal smoothing
-                    value = previousValues[i] * (1 - smoothingFactor) + value * smoothingFactor;
+                    // Adaptive smoothing - less smoothing during beats
+                    const beatSmoothing = isBeat ? 0.6 : smoothingFactor;
+                    value = previousValues[i] * (1 - beatSmoothing) + value * beatSmoothing;
                     previousValues[i] = value;
 
                     const x = (i / NUM_POINTS) * 8 - 4;
@@ -228,7 +253,8 @@
                     positions[i * 3 + 1] = value;
                     positions[i * 3 + 2] = 0;
                     
-                    const color = lerpColor(Math.min(value, 1.0));
+                    const intensityBoost = isBeat ? 1.3 : 1.0;
+                    const color = lerpColor(Math.min(value * intensityBoost, 1.0));
                     colors[i * 3] = color.r;
                     colors[i * 3 + 1] = color.g;
                     colors[i * 3 + 2] = color.b;
@@ -243,20 +269,25 @@
             requestAnimationFrame(animate);
             updateLine();
             
-            // Calculate audio intensity focusing more on lower frequencies
-            let avgIntensity = 0;
-            const intensitySamples = Math.floor(NUM_POINTS * 0.3); // Focus on lower 30% of frequencies
-            for(let i = 0; i < intensitySamples; i++) {
-                avgIntensity += dataArray[i];
+            // Calculate beat-aware camera movement
+            let cameraMovement = 0;
+            const bassRange = Math.floor(NUM_POINTS * 0.1); // Use first 10% of frequencies
+            let bassEnergy = 0;
+            for(let i = 0; i < bassRange; i++) {
+                bassEnergy += dataArray[i];
             }
-            avgIntensity = (avgIntensity / intensitySamples) / 255.0;
+            bassEnergy = bassEnergy / (bassRange * 255); // Normalize to 0-1
             
-            // Smooth the intensity for camera movement
-            const intensityFactor = avgIntensity * 0.3; // Reduce the impact of intensity
+            const now = performance.now();
+            const isBeat = bassEnergy > beatThreshold && (now - lastBeatTime) > minBeatInterval;
             
-            // Gentler camera movement
-            camera.position.applyAxisAngle(new THREE.Vector3(1, 0, 0), 0.0003 * (1 + intensityFactor));
-            camera.position.applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.0005 * (1 + intensityFactor));
+            // Dynamic camera movement based on beats
+            const baseMovement = 0.0003;
+            const beatBoost = isBeat ? 3.0 : 1.0;
+            const movementScale = baseMovement * (1 + bassEnergy * beatBoost);
+            
+            camera.position.applyAxisAngle(new THREE.Vector3(1, 0, 0), movementScale);
+            camera.position.applyAxisAngle(new THREE.Vector3(0, 1, 0), movementScale * 1.5);
             camera.lookAt(0, 0, 0);
             
             controls.update();
