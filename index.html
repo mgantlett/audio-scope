@@ -26,8 +26,8 @@
         <select id="audioSource" style="margin: 10px 0; padding: 5px; background: rgba(255,255,255,0.9);"></select>
         <div style="margin-top: 10px;">
             <label for="gainControl">Gain: </label>
-            <input type="range" id="gainControl" min="0" max="200" value="100" style="width: 150px; background: rgba(255,255,255,0.9);">
-            <span id="gainValue">100%</span>
+            <input type="range" id="gainControl" min="0" max="400" value="200" style="width: 150px; background: rgba(255,255,255,0.9);">
+            <span id="gainValue">200%</span>
         </div>
     </div>
     <script type="importmap">
@@ -132,8 +132,7 @@
             });
         }
 
-        async function initAudio() {
-            // Clean up existing resources
+        async function cleanupAudio() {
             if (currentStream) {
                 currentStream.getTracks().forEach(track => track.stop());
                 currentStream = null;
@@ -143,7 +142,12 @@
                 await audioContext.close();
                 audioContext = null;
                 analyser = null;
+                gainNode = null;
             }
+        }
+
+        async function initAudio() {
+            await cleanupAudio();
 
             const deviceId = document.getElementById('audioSource').value;
             if (!deviceId) {
@@ -315,30 +319,35 @@
             })
             .catch(err => console.error('Error getting initial permissions:', err));
 
+        // Initialize gainValue from the control
+        gainValue = document.getElementById('gainControl').value / 100;
+
         // Handle device selection changes
         document.getElementById('audioSource').addEventListener('change', async (event) => {
             const deviceId = event.target.value;
             if (!deviceId) {
-                // If no device is selected, stop current stream
-                if (currentStream) {
-                    currentStream.getTracks().forEach(track => track.stop());
-                    currentStream = null;
-                }
+                await cleanupAudio();
                 return;
             }
             
             try {
                 await initAudio();
-                // Don't hide the info div - keep it visible for future selections
             } catch (err) {
                 console.error('Error initializing audio:', err);
+                await cleanupAudio();
             }
         });
 
-        // Start audio processing when clicked, but only if no device is selected yet
-        document.addEventListener('click', () => {
-            if (!analyser && !currentStream) {
-                initAudio().catch(err => console.error('Error initializing audio:', err));
+        // Start audio processing when clicked, but only if a device is selected and audio isn't running
+        document.addEventListener('click', async () => {
+            const deviceId = document.getElementById('audioSource').value;
+            if (!analyser && !currentStream && deviceId) {
+                try {
+                    await initAudio();
+                } catch (err) {
+                    console.error('Error initializing audio:', err);
+                    await cleanupAudio();
+                }
             }
         });
     </script>
