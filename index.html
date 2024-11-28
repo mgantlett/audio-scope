@@ -21,7 +21,10 @@
     </style>
 </head>
 <body>
-    <div id="info">Click to start<br>Select VoiceMeeter Output (B1) as input source</div>
+    <div id="info">
+        <div>Select input source and click to start:</div>
+        <select id="audioSource" style="margin: 10px 0; padding: 5px; background: rgba(255,255,255,0.9);"></select>
+    </div>
     <script type="importmap">
         {
             "imports": {
@@ -78,19 +81,49 @@
             window.addEventListener('resize', onWindowResize, false);
         }
 
-        function initAudio() {
-            const audioContext = new AudioContext();
-            navigator.mediaDevices.getUserMedia({ audio: true })
-                .then(stream => {
-                    const source = audioContext.createMediaStreamSource(stream);
-                    analyser = audioContext.createAnalyser();
-                    analyser.fftSize = 256;
-                    source.connect(analyser);
-                    dataArray = new Uint8Array(analyser.frequencyBinCount);
-                    document.getElementById('info').style.display = 'none';
-                    animate();
-                })
-                .catch(err => console.error('Error accessing audio:', err));
+        let audioContext;
+        let currentStream = null;
+
+        async function getAudioDevices() {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const audioInputs = devices.filter(device => device.kind === 'audioinput');
+            const select = document.getElementById('audioSource');
+            select.innerHTML = '';
+            audioInputs.forEach(device => {
+                const option = document.createElement('option');
+                option.value = device.deviceId;
+                option.text = device.label || `Microphone ${select.length + 1}`;
+                select.appendChild(option);
+            });
+        }
+
+        async function initAudio() {
+            if (!audioContext) {
+                audioContext = new AudioContext();
+            }
+
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+
+            const deviceId = document.getElementById('audioSource').value;
+            try {
+                currentStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        deviceId: deviceId ? {exact: deviceId} : undefined
+                    }
+                });
+                
+                const source = audioContext.createMediaStreamSource(currentStream);
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                source.connect(analyser);
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                document.getElementById('info').style.display = 'none';
+                animate();
+            } catch (err) {
+                console.error('Error accessing audio:', err);
+            }
         }
 
         function onWindowResize() {
@@ -124,8 +157,27 @@
         }
 
         init();
+
+        // Request permission and enumerate devices on page load
+        navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(stream => {
+                stream.getTracks().forEach(track => track.stop());
+                return getAudioDevices();
+            })
+            .catch(err => console.error('Error getting initial permissions:', err));
+
+        // Handle device selection changes
+        document.getElementById('audioSource').addEventListener('change', () => {
+            if (analyser) {
+                initAudio();
+            }
+        });
+
+        // Start audio processing when clicked
         document.addEventListener('click', () => {
-            if (!analyser) initAudio();
+            if (!analyser) {
+                initAudio();
+            }
         });
     </script>
 </body>
